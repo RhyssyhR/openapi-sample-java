@@ -24,6 +24,10 @@ import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.entity.mime.HttpMultipartMode;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.impl.client.BasicCookieStore;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
@@ -33,6 +37,8 @@ import org.apache.http.util.EntityUtils;
 
 public class ApiClient {
 
+    public static final String DEFAULT_BASE_URL = "https://my.workshare.com";
+
     private static final Log log = LogFactory.getLog(ApiClient.class);
 
     private final String baseUrl;
@@ -41,7 +47,7 @@ public class ApiClient {
     private final String appUid;
 
     public ApiClient(String appuid) {
-        this("https://my.workshare.com/", appuid);
+        this(DEFAULT_BASE_URL, appuid);
     }
 
     public ApiClient(String baseurl, String appuid) {
@@ -56,29 +62,29 @@ public class ApiClient {
 
     public void login(String username, String password) throws IOException {
 
-        final HttpPost method = new HttpPost(makeUrl("user_sessions.json"));
-
         final List<NameValuePair> params = new ArrayList<NameValuePair>();
         params.add(new BasicNameValuePair("user_session[email]", username));
         params.add(new BasicNameValuePair("user_session[password]", password));
         params.add(new BasicNameValuePair("device[app_uid]", appUid));
-        method.setEntity(new UrlEncodedFormEntity(params));
 
-        final HttpResponse response = httpclient.execute(method, context);
+        final HttpPost request = new HttpPost(makeUrl("user_sessions.json"));
+        request.setEntity(new UrlEncodedFormEntity(params));
+
+        final HttpResponse response = httpclient.execute(request, context);
         ckeckResponse(consume(response), 201);
     }
 
     public void logout() throws IOException {
 
-        final HttpGet method = new HttpGet(makeUrl("logout.json"));
-        consume(httpclient.execute(method, context));
+        final HttpGet request = new HttpGet(makeUrl("logout.json"));
+        consume(httpclient.execute(request, context));
     }
 
     public JSONArray getFolders() throws IOException {
 
-        final HttpGet method = new HttpGet(makeUrl("folders.json"));
-        final HttpResponse res = httpclient.execute(method, context);
+        final HttpGet request = new HttpGet(makeUrl("folders.json"));
 
+        final HttpResponse res = httpclient.execute(request, context);
         try {
             final JSONObject result = (JSONObject) JSONValue.parse(res.getEntity().getContent());
             final JSONArray folders = (JSONArray) result.get("folders");
@@ -90,8 +96,9 @@ public class ApiClient {
 
     public JSONArray getFiles() throws IOException {
 
-        final HttpGet method = new HttpGet(makeUrl("files.json"));
-        final HttpResponse res = httpclient.execute(method, context);
+        final HttpGet request = new HttpGet(makeUrl("files.json"));
+        
+        final HttpResponse res = httpclient.execute(request, context);
         try {
             final JSONObject result = (JSONObject) JSONValue.parse(res.getEntity().getContent());
             final JSONArray files = (JSONArray) result.get("files");
@@ -106,8 +113,9 @@ public class ApiClient {
         File result = new File(System.getProperty("java.io.tmpdir"), (String)file.get("name"));
 
         String url = makeUrl("files/" + file.get("id")+"/download");
-        HttpGet httpGet = new HttpGet(url);
-        HttpResponse res = httpclient.execute(httpGet, context);
+        HttpGet request = new HttpGet(url);
+        
+        HttpResponse res = httpclient.execute(request, context);
         try {
             OutputStream out = new BufferedOutputStream(new FileOutputStream(result));
             try {
@@ -130,6 +138,29 @@ public class ApiClient {
 
         return result;
     }
+
+    public JSONObject upload(File source, Integer folderId) throws IOException {
+
+        MultipartEntity multipart = new MultipartEntity(HttpMultipartMode.BROWSER_COMPATIBLE);
+        multipart.addPart("file[name]", new StringBody(source.getName()));
+        multipart.addPart("file[updated_with]", new StringBody("cli"));
+        multipart.addPart("Filedata", new FileBody(source, "application/octet-stream"));
+        if (folderId != null)
+            multipart.addPart("file[folder_id]", new StringBody(folderId.toString()));
+
+        HttpPost request = new HttpPost(makeUrl("files.json"));
+        request.setEntity(multipart);
+        
+        HttpResponse res = httpclient.execute(request, context);
+        try {
+            ckeckResponse(res, 201);
+            final JSONObject result = (JSONObject) JSONValue.parse(res.getEntity().getContent());
+            return result;
+        } finally {
+            consume(res);
+        }
+    }
+
 
     private void ckeckResponse(HttpResponse response, final int expectedStatus) throws IOException {
         log.debug(response);
